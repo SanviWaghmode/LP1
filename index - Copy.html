@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+            body {
+                font-family: "Segoe UI", sans-serif;
+                background: #f4f7fa;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 40px;
+            }
+            h1 {
+                color: #333;
+                margin-bottom: 25px;
+            }
+            .button-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 15px;
+                justify-content: center;
+            }
+            button {
+                background-color: #0078ff;
+                color: white;
+                border: none;
+                padding: 12px 18px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 16px;
+                transition: background 0.2s ease;
+            }
+            button:hover {
+                background-color: #005fcc;
+            }
+            .copied {
+                background-color: #00c851 !important;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="button-container">
+            <button onclick="copyCode(1, this)">AssemblerPass1</button>
+            <button onclick="copyCode(2, this)">AssemblerPass2</button>
+            <button onclick="copyCode(3, this)">MacroPass1</button>
+            <button onclick="copyCode(4, this)">MacroPass2</button>
+            <button onclick="copyCode(5, this)">Mutex</button>
+            <button onclick="copyCode(6, this)">MemoryPlacement</button>
+            <button onclick="copyCode(7, this)">HCI</button>
+        </div>
+
+        <script>
+            const assignmentCodes = {
+                1: `import java.io.*;
+import java.util.*;
+
+public class PassOneAssembler {
+
+    static Map<String, String> OPTAB = new HashMap<>();
+    static Map<String, Integer> REGTAB = new HashMap<>();
+    static Map<String, Integer> CONDTAB = new HashMap<>();
+    static Map<String, Integer> SYMTAB = new LinkedHashMap<>();
+    static List<Literal> LITTAB = new ArrayList<>();
+    static List<Integer> POOLTAB = new ArrayList<>();
+    static List<String> IC = new ArrayList<>();
+    static int LC = 0;
+
+    static class Literal {
+        String name;
+        int address;
+
+        Literal(String n) {
+            name = n;
+            address = -1;
+        }
+
+        public String toString() {
+            return name + "=" + address;
+        }
+    }
+
+    static void initTables() {
+        OPTAB.put("STOP", "(IS, 00)");
+        OPTAB.put("ADD", "(IS, 01)");
+        OPTAB.put("SUB", "(IS, 02)");
+        OPTAB.put("MULT", "(IS, 03)");
+        OPTAB.put("MOVER", "(IS, 04)");
+        OPTAB.put("MOVEM", "(IS, 05)");
+        OPTAB.put("COMP", "(IS, 06)");
+        OPTAB.put("BC", "(IS, 07)");
+        OPTAB.put("DIV", "(IS, 08)");
+        OPTAB.put("READ", "(IS, 09)");
+        OPTAB.put("PRINT", "(IS, 10)");
+
+        REGTAB.put("AREG", 1);
+        REGTAB.put("BREG", 2);
+        REGTAB.put("CREG", 3);
+        REGTAB.put("DREG", 4);
+
+        CONDTAB.put("LT", 1);
+        CONDTAB.put("LE", 2);
+        CONDTAB.put("EQ", 3);
+        CONDTAB.put("GT", 4);
+        CONDTAB.put("GE", 5);
+        CONDTAB.put("ANY", 6);
+    }
+
+    static boolean isDirective(String s) {
+        return List.of("START", "END", "ORIGIN", "EQU", "LTORG", "DS", "DC").contains(s);
+    }
+
+    public static void main(String[] args) throws IOException {
+        initTables();
+        try (BufferedReader br = new BufferedReader(new FileReader("input2.asm"))) {
+            POOLTAB.add(0);
+
+            String line;
+            while ((line = br.readLine()) != null) {
+                List<String> tokens = parseTokens(line);
+                processLine(tokens);
+            }
+            printAll();
+        }
+    }
+
+    static List<String> parseTokens(String line) {
+        String[] ts = line.split("\\s+|,");
+        return new ArrayList<>(Arrays.asList(ts));
+    }
+
+    static void processLine(List<String> tokens) {
+        String label = null, opcode, op1 = null, op2 = null;
+
+        if (OPTAB.containsKey(tokens.get(0)) || isDirective(tokens.get(0))) {
+            opcode = tokens.get(0);
+            if (tokens.size() > 1) op1 = tokens.get(1);
+            if (tokens.size() > 2) op2 = tokens.get(2);
+        } else {
+            label = tokens.get(0);
+            opcode = tokens.get(1);
+            if (tokens.size() > 2) op1 = tokens.get(2);
+            if (tokens.size() > 3) op2 = tokens.get(3);
+        }
+
+        if (label != null) SYMTAB.put(label, LC);
+
+        switch (opcode) {
+
+            case "START":
+                LC = Integer.parseInt(op1);
+                IC.add("(AD, 01) (C, " + op1 + ")");
+                break;
+
+            case "END":
+                handleLiteralPool();
+                IC.add("(AD, 02)");
+                break;
+
+            case "LTORG":
+                handleLiteralPool();
+                IC.add("(AD, 05)");
+                break;
+
+            case "ORIGIN":
+                LC = evaluateExpression(op1);
+                IC.add("(AD, 03) (C, " + LC + ")");
+                break;
+
+            case "EQU":
+                SYMTAB.put(label, evaluateExpression(op1));
+                break;
+
+            case "DC":
+                String val = op1.replace("='", "").replace("'", "");
+                IC.add("(DL, 01) (C, " + val + ")");
+                LC++;
+                break;
+
+            case "DS":
+                IC.add("(DL, 02), (C, " + op1 + ")");
+                LC += Integer.parseInt(op1);
+                break;
+
+            default:
+                handleInstruction(opcode, op1, op2);
+                LC++;
+        }
+    }
+
+    static void handleInstruction(String opcode, String op1, String op2) {
+        String icLine = OPTAB.get(opcode);
+
+        if (op1 != null) {
+            if (REGTAB.containsKey(op1))
+                icLine += " (" + REGTAB.get(op1) + ")";
+            else if (CONDTAB.containsKey(op1))
+                icLine += " (" + CONDTAB.get(op1) + ")";
+            else {
+                if (!SYMTAB.containsKey(op1)) SYMTAB.put(op1, -1);
+                icLine += " (S, " + (findSymbolIndex(op1) + 1) + ")";
+            }
+        }
+
+        if (op2 != null) {
+            if (op2.contains("=")) {
+                addLiteral(op2);
+                icLine += " (L, " + LITTAB.size() + ")";
+            } else {
+                if (!SYMTAB.containsKey(op2)) SYMTAB.put(op2, -1);
+                icLine += " (S, " + (findSymbolIndex(op2) + 1) + ")";
+            }
+        }
+
+        IC.add(icLine.trim());
+    }
+
+    static void handleLiteralPool() {
+        boolean added = false;
+
+        for (Literal l : LITTAB) {
+            if (l.address == -1) {
+                l.address = LC++;
+                added = true;
+                String val = l.name.replace("='", "").replace("'", "");
+                IC.add("(DL, 01) (C, " + val + ")");
+            }
+        }
+        if (added) POOLTAB.add(LITTAB.size());
+    }
+
+    static int evaluateExpression(String expr) {
+        if (expr.contains("+") || expr.contains("-")) {
+            String[] parts = expr.split("(?=[+-])");
+            String baseSym = parts[0].trim();
+            int baseAddr = SYMTAB.getOrDefault(baseSym, -1);
+            if (baseAddr == -1)
+                throw new RuntimeException("Undefined symbol: " + baseSym);
+
+            return baseAddr + Integer.parseInt(parts[1]);
+        }
+
+        if (SYMTAB.containsKey(expr)) return SYMTAB.get(expr);
+
+        return Integer.parseInt(expr);
+    }
+
+    static int findSymbolIndex(String sym) {
+        int i = 0;
+        for (String s : SYMTAB.keySet()) {
+            if (s.equals(sym)) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    static void addLiteral(String lit) {
+        for (Literal l : LITTAB) {
+            if (l.name.equals(lit)) return;
+        }
+        LITTAB.add(new Literal(lit));
+    }
+
+    static void printAll() {
+        System.out.println("\nIntermediate Code:\n");
+        IC.forEach(System.out::println);
+
+        System.out.println("\n\nSymbol Table:\n");
+        SYMTAB.forEach((k, v) -> System.out.println(k + " = " + v));
+
+        System.out.println("\n\nLiteral Table:\n");
+        for (Literal l : LITTAB) System.out.println(l);
+
+        System.out.println("\n\nPool Table:\n");
+        for (int i = 0; i < POOLTAB.size(); i++)
+            System.out.println((i + 1) + ") " + POOLTAB.get(i));
+    }
+}
+`,
+                2: ` import java.io.*;
+import java.util.*;
+
+public class TwoPassAssemblerPassOne {
+    static Map<String, String[]> OPTAB = new HashMap<>();
+    static Map<String, Integer> REGTAB = new HashMap<>();
+    static Map<String, Integer> CONDTAB = new HashMap<>();
+    static Map<String, Integer> SYMTAB = new LinkedHashMap<>();
+    static List<Literal> LITTAB = new ArrayList<>();
+    static List<Integer> POOLTAB = new ArrayList<>();
+    static List<String> IC = new ArrayList<>();
+
+    static int LC = 0;
+
+    static class Literal {
+        String literal;
+        int address;
+
+        Literal(String literal) {
+            this.literal = literal;
+            this.address = -1;
+        }
+    }
+
+    public static void main(String[] args) {
+        initTables();
+
+        try {
+            BufferedReader br = new BufferedReader(new FileReader("program1.asm"));
+            String line;
+            POOLTAB.add(0);
+
+            while ((line = br.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                String[] parts = line.split("\\s+|,");
+                List<String> tokens = new ArrayList<>();
+                for (String part: parts) {
+                    if (!part.isEmpty()) tokens.add(part);
+                }
+
+                String label = null;
+                String opcode;
+                String op1 = null, op2 = null;
+
+                if (OPTAB.containsKey(tokens.get(0)) || isDirective(tokens.get(0))) {
+                    opcode = tokens.get(0);
+                    if (tokens.size() > 1) op1 = tokens.get(1);
+                    if (tokens.size() > 2) op2 = tokens.get(2);
+                } else {
+                    label = tokens.get(0);
+                    opcode = tokens.get(1);
+                    if (tokens.size() > 2) op1 = tokens.get(2);
+                    if (tokens.size() > 3) op2 = tokens.get(3);
+                }
+
+                if (label != null) {
+                    SYMTAB.put(label, LC);
+                }
+
+                if (opcode.equals("START")) {
+                    LC = Integer.parseInt(op1);
+                    IC.add("(AD, 01) (C, " + op1 + ")");
+                } else if (opcode.equals("END") || opcode.equals("LTORG")) {
+                    handleLiteralPool();
+                    IC.add("(AD, " + (opcode.equals("END") ? "02" : "05") + ")");
+                } else if (opcode.equals("ORIGIN")) {
+                    int val = evaluateExpression(op1);
+                    IC.add("(AD, 03) (C, " + val + ")");
+                    LC = val;
+                } else if (opcode.equals("EQU")) {
+                    int val = evaluateExpression(op1);
+                    SYMTAB.put(label, val);
+                } else if (opcode.equals("DS")) {
+                    IC.add("(DL, 02) (C, " + op1 + ")");
+                    LC += Integer.parseInt(op1);
+                } else if (opcode.equals("DC")) {
+                    IC.add("(DL, 01) (C, " + op1.replace("'", "") + ")");
+                    LC += 1;
+                } else {
+                    String[] opInfo = OPTAB.get(opcode);
+                    String icLine = "(IS," + opInfo[1] + ") ";
+
+                    if (op1 != null) {
+                        if (REGTAB.containsKey(op1)) {
+                            icLine += "(" + REGTAB.get(op1) + ") ";
+                        } else if (CONDTAB.containsKey(op1)) {
+                            icLine += "(" + CONDTAB.get(op1) + ") ";
+                        }
+                    }
+                    if (op2 != null) {
+                        if (op2.startsWith("=")) {
+                            Literal lit = new Literal(op2);
+                            boolean exists = false;
+                            for (Literal l : LITTAB) {
+                                if (l.literal.equals(op2)) {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if (!exists) {
+                                LITTAB.add(lit);
+                            }
+                            int litIndex = findLiteralIndex(op2) + 1;
+                            icLine += "(L," + litIndex + ")";
+                        } else if (SYMTAB.containsKey(op2)) {
+                            int symIndex = findSymbolIndex(op2) + 1;
+                            icLine += "(S," + symIndex + ")";
+                        } else {
+                            if (!SYMTAB.containsKey(op2)) {
+                                SYMTAB.put(op2, -1);
+                            }
+                            int symIndex = findSymbolIndex(op2) + 1;
+                            icLine += "(S," + symIndex + ")";
+                        }
+                    }
+                    IC.add(icLine.trim());
+                    LC++;
+                }
+            }
+            br.close();
+
+            System.out.println("Intermediate Code:");
+            for (String ic : IC) {
+                System.out.println(ic);
+            }
+
+            System.out.println("\nSymbol Table:");
+            for (Map.Entry<String, Integer> e : SYMTAB.entrySet()) {
+                System.out.println(e.getKey() + " = " + e.getValue());
+            }
+
+            System.out.println("\nLiteral Table:");
+            int i = 1;
+            for (Literal l : LITTAB) {
+                System.out.println(i++ + ") " + l.literal + " = " + l.address);
+            }
+
+            System.out.println("\nPool Table:");
+            for (int p : POOLTAB) {
+                System.out.println("#" + (POOLTAB.indexOf(p) + 1) + " starts at literal #" + (p + 1));
+            }
+
+        } catch(IOException e) {
+            System.out.println(e);
+        }
+    }
+
+    static public boolean isDirective (String s) {
+        return s.equals("START") || s.equals("END") || s.equals("ORIGIN") || s.equals("EQU") || s.equals("LTORG") || s.equals("DS") ||s.equals("DC");
+    }
+
+    static public void initTables() {
+        OPTAB.put("STOP", new String[] {"IS", "00"});
+        OPTAB.put("ADD", new String[] {"IS", "01"});
+        OPTAB.put("SUB", new String[] {"IS", "02"});
+        OPTAB.put("MULT", new String[] {"IS", "03"});
+        OPTAB.put("MOVER", new String[] {"IS", "04"});
+        OPTAB.put("MOVEM", new String[] {"IS", "05"});
+        OPTAB.put("COMP", new String[] {"IS", "06"});
+        OPTAB.put("BC", new String[] {"IS", "07"});
+        OPTAB.put("DIV", new String[] {"IS", "08"});
+        OPTAB.put("READ", new String[] {"IS", "09"});
+        OPTAB.put("PRINT", new String[] {"IS", "10"});
+
+        REGTAB.put("AREG", 1);
+        REGTAB.put("BREG", 2);
+        REGTAB.put("CREG", 3);
+        REGTAB.put("DREG", 4);
+
+        CONDTAB.put("LT", 1);
+        CONDTAB.put("LE", 2);
+        CONDTAB.put("EQ", 3);
+        CONDTAB.put("GT", 4);
+        CONDTAB.put("GE", 5);
+        CONDTAB.put("ANY", 6);
+    }
+
+    static void handleLiteralPool() {
+        int poolStart = POOLTAB.get(POOLTAB.size() - 1);
+        for (int i = poolStart; i < LITTAB.size(); i++) {
+            if (LITTAB.get(i).address == -1) {
+                LITTAB.get(i).address = LC++;
+            }
+        }
+        if (LITTAB.size() > poolStart) {
+            POOLTAB.add(LITTAB.size());
+        }
+    }
+    
+
+    static int findLiteralIndex(String lit) {
+        for (int i = 0; i < LITTAB.size(); i++) {
+            if (LITTAB.get(i).literal.equals(lit))
+                return i;
+        }
+        return -1;
+    }
+
+    static int findSymbolIndex(String sym) {
+        int i = 0;
+        for (String s: SYMTAB.keySet()) {
+            if (s.equals(sym)) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    static int evaluateExpression(String expr) {
+        if (expr.contains("+")) {
+            String[] parts = expr.split("\\+");
+            int base = SYMTAB.getOrDefault(parts[0], -1);
+            if (base == -1) {
+                throw new RuntimeException("Undefined symbol: " + parts[0]);
+            }
+            return base + Integer.parseInt(parts[1]);
+        } else if (expr.contains("-")) {
+            String[] parts = expr.split("\\-");
+            int base = SYMTAB.getOrDefault(parts[0], -1);
+            if (base == -1) {
+                throw new RuntimeException("Undefined symbol: " + parts[0]);
+            }
+            return base - Integer.parseInt(parts[1]);
+        } else {
+            if (SYMTAB.containsKey(expr)) {
+                int base = SYMTAB.get(expr);
+                if (base == -1) {
+                    throw new RuntimeException("Undefined symbol: " + expr);
+                }
+                return base;
+            } else {
+                return Integer.parseInt(expr);
+            }
+        }
+    }
+    
+}  
+
+`,
+                3: `import java.io.*;
+import java.util.*;
+
+public class PassOneMacro {
+
+    // ---------------- MNT Entry ----------------
+    static class MNTEntry {
+        String name;
+        int pp, kp, mdtp, kpdtp;
+
+        MNTEntry(String n, int p, int k, int md, int kd) {
+            name = n;
+            pp = p;
+            kp = k;
+            mdtp = md;
+            kpdtp = kd;
+        }
+
+        public String toString() {
+            return name + "  PP=" + pp + "  KP=" + kp + "  MDTP=" + mdtp + "  KPDTABPTR=" + kpdtp;
+        }
+    }
+
+    // ---------------- KPDTAB Entry ----------------
+    static class KPEntry {
+        String param, defaultVal;
+
+        KPEntry(String p, String d) {
+            param = p;
+            defaultVal = d;
+        }
+
+        public String toString() {
+            return param + "=" + defaultVal;
+        }
+    }
+
+    public static void main(String[] args) throws IOException {
+
+        List<MNTEntry> MNT = new ArrayList<>();
+        List<KPEntry> KPDTAB = new ArrayList<>();
+        List<String> MDT = new ArrayList<>();
+        Map<String, Integer> PNTAB = new LinkedHashMap<>();
+
+        int mdtp = 1, kpdtp = 1;
+
+        try (BufferedReader br = new BufferedReader(new FileReader("input.asm"))) {
+            String line;
+
+            while ((line = br.readLine()) != null) {
+
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                if (line.equalsIgnoreCase("MACRO")) {
+
+                    String header = br.readLine().trim();
+                    String[] parts = header.split("\\s+", 2);
+
+                    String macroName = parts[0];
+                    String[] params = parts.length > 1 ? parts[1].split(",") : new String[0];
+
+                    // Reset ALA/PNTAB
+                    PNTAB.clear();
+                    int pp = 0, kp = 0;
+
+                    // Process parameters
+                    for (String p : params) {
+                        p = p.trim();
+                        if (p.contains("=")) {
+                            String[] temp = p.split("=");
+                            KPDTAB.add(new KPEntry(temp[0], temp.length > 1 ? temp[1] : "-"));
+                            PNTAB.put(temp[0], PNTAB.size() + 1);
+                            kp++;
+                        } else if (!p.isEmpty()) {
+                            PNTAB.put(p, PNTAB.size() + 1);
+                            pp++;
+                        }
+                    }
+
+                    // Add macro to MNT
+                    MNT.add(new MNTEntry(macroName, pp, kp, mdtp, kpdtp));
+
+                    // Read macro body
+                    while ((line = br.readLine()) != null) {
+                        line = line.trim();
+
+                        if (line.equalsIgnoreCase("MEND")) {
+                            MDT.add("MEND");
+                            mdtp++;
+                            break;
+                        }
+
+                        // Replace parameters with (P,index)
+                        for (String param : PNTAB.keySet()) {
+                            line = line.replace(param, "(P," + PNTAB.get(param) + ")");
+                        }
+
+                        MDT.add(line);
+                        mdtp++;
+                    }
+
+                    kpdtp += kp;
+                }
+            }
+        }
+
+        // ---------------- TABLE OUTPUT ----------------
+
+        System.out.println("\n================ MNT (Macro Name Table) ================\n");
+        int idx = 1;
+        for (MNTEntry m : MNT) {
+            System.out.println(idx++ + ". " + m);
+        }
+
+        System.out.println("\n================ MDT (Macro Definition Table) ================\n");
+        int i = 1;
+        for (String entry : MDT) {
+            System.out.println(i++ + "  " + entry);
+        }
+
+        System.out.println("\n================ ALA (Argument List Array / PNTAB) ================\n");
+        idx = 1;
+        for (String param : PNTAB.keySet()) {
+            System.out.println(idx++ + "  " + param);
+        }
+    }
+}
+`,
+                4: `import java.io.*;
+import java.util.*;
+
+public class PassTwoMacro {
+
+    // -------- MNT Entry --------
+    static class MNTEntry {
+        String name;
+        int pp, kp, mdtp, kpdtp;
+
+        MNTEntry(String n, int p, int k, int md, int kd) {
+            name = n;
+            pp = p;
+            kp = k;
+            mdtp = md;
+            kpdtp = kd;
+        }
+    }
+
+    // -------- Keyword Parameter Table Entry --------
+    static class KPEntry {
+        String param, defaultVal;
+
+        KPEntry(String p, String d) {
+            param = p;
+            defaultVal = d;
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+
+        // Tables
+        List<MNTEntry> MNT = new ArrayList<>();
+        List<KPEntry> KPDTAB = new ArrayList<>();
+        List<String> MDT = new ArrayList<>();
+        List<String> IC = new ArrayList<>();
+
+        // ------- Load MNT manually or from file -------
+        // Example: COMPUTE macro with:
+        // PP = 1, KP = 2, MDTP=1, KPDTABPTR=1
+        MNT.add(new MNTEntry("COMPUTE", 1, 2, 1, 1));
+
+        // ------- Load KPDTAB manually -------
+        KPDTAB.add(new KPEntry("&B", "5"));
+        KPDTAB.add(new KPEntry("&C", "10"));
+
+        // ------- Read MDT from file mdt.txt -------
+        try (BufferedReader br = new BufferedReader(new FileReader("mdt.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (!line.trim().isEmpty()) MDT.add(line.trim());
+            }
+        }
+
+        // ------- Read IC from file ic.txt -------
+        try (BufferedReader br = new BufferedReader(new FileReader("ic.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (!line.trim().isEmpty()) IC.add(line.trim());
+            }
+        }
+
+        // -------------- PASS TWO EXPANSION --------------
+        System.out.println("===== PASS TWO OUTPUT (Macro Expanded Code) =====\n");
+
+        for (String line : IC) {
+
+            String[] parts = line.split("\\s+|,");
+            String macroName = parts[0];
+
+            // Search macro in MNT
+            MNTEntry macro = null;
+            for (MNTEntry m : MNT) {
+                if (m.name.equalsIgnoreCase(macroName)) {
+                    macro = m;
+                    break;
+                }
+            }
+
+            // If NOT a macro call → print normally
+            if (macro == null) {
+                System.out.println(line);
+                continue;
+            }
+
+            // -------- Build Argument List (ALA) --------
+            Map<Integer, String> argMap = new HashMap<>();
+            List<String> posArgs = new ArrayList<>();
+            Map<String, String> kwArgs = new HashMap<>();
+
+            for (int i = 1; i < parts.length; i++) {
+                if (parts[i].contains("=")) {
+                    String[] kv = parts[i].split("=");
+                    kwArgs.put(kv[0].trim(), kv[1].trim());
+                } else {
+                    posArgs.add(parts[i].trim());
+                }
+            }
+
+            int pp = macro.pp;
+
+            // Positionals
+            for (int i = 0; i < pp && i < posArgs.size(); i++) {
+                argMap.put(i + 1, posArgs.get(i));
+            }
+
+            // Keyword parameters
+            for (int j = 0; j < macro.kp; j++) {
+                KPEntry k = KPDTAB.get(macro.kpdtp - 1 + j);
+                int pos = pp + j + 1;
+
+                if (kwArgs.containsKey(k.param)) {
+                    argMap.put(pos, kwArgs.get(k.param));
+                } else if (posArgs.size() > pp + j) {
+                    argMap.put(pos, posArgs.get(pp + j));
+                } else {
+                    argMap.put(pos, k.defaultVal);
+                }
+            }
+
+            // -------- Expand MDT --------
+            int mdtp = macro.mdtp - 1;
+
+            while (!MDT.get(mdtp).equalsIgnoreCase("MEND")) {
+                String expanded = MDT.get(mdtp);
+
+                for (Map.Entry<Integer, String> e : argMap.entrySet()) {
+                    expanded = expanded.replace("(P," + e.getKey() + ")", e.getValue());
+                }
+
+                System.out.println(expanded);
+                mdtp++;
+            }
+        }
+    }
+}
+>`,
+                5: `import java.util.LinkedList;
+import java.util.Queue;
+import java.util.concurrent.Semaphore;
+
+public class B1{
+
+    static final int BUFFER_SIZE = 5;
+    static final int MAX_ITEMS = 10;
+    static Queue<Integer> buffer = new LinkedList<>();
+    
+
+    //semaphores
+    static Semaphore mutex = new Semaphore(1);
+    static Semaphore empty = new Semaphore(BUFFER_SIZE);
+    static Semaphore full = new Semaphore(0);
+    
+    
+    static  class Producer extends Thread{
+        public void run(){
+            try{
+                for(int i = 0 ; i< MAX_ITEMS ; i++){
+                    empty.acquire();
+                    mutex.acquire();
+                    buffer.add(i);
+                    System.out.println("Produced: " + i + "| Buffer: " + buffer);
+                    mutex.release();
+                    full.release();
+
+                    Thread.sleep(500
+                    );
+
+
+                }
+                System.out.println("producer finished producing");
+
+
+            }catch(InterruptedException e){
+                e.printStackTrace();
+
+            }
+            
+        }
+    
+
+}
+
+static class Consumer extends Thread{
+    public void run(){
+        try{
+            for(int i = 0; i< MAX_ITEMS ; i++){
+                full.acquire();
+                mutex.acquire();
+
+                int item = buffer.remove();
+
+                System.out.println("Consumed:"+ i +"| Buffer: " + buffer);
+                mutex.release();
+                empty.release();
+
+                Thread.sleep(800
+                );
+
+            }
+            System.out.println("Consumer finished consuming");
+        } catch(InterruptedException e){
+            e.printStackTrace();
+
+        }
+
+        }
+    }
+
+    public static void main(String args[]){
+        Producer producer = new Producer();
+        Consumer consumer = new Consumer();
+
+        producer.start();
+        consumer.start();
+    }
+
+}
+
+
+
+
+    
+
+`,
+                6: `import java.util.*;
+
+public class MemoryPlacement{
+
+    public static void firstFit(int[] blockArr , int[] process , int m , int n ){
+        //block -> array of sizes of free blocks
+        // Process-> array of sizes of process
+        // m -> size of blocks array
+        //n size of process array
+
+        int[] allocated = new int[n];  // array to remember allocated processess;
+        for(int i  = 0 ; i<n ; i++){
+            allocated[i] = -1; //not allocated yet
+        }
+
+       System.out.println("\n------------------------------------------");
+System.out.println("          FIRST FIT ALLOCATION");
+System.out.println("------------------------------------------");
+System.out.printf("%-10s %-15s %-20s %-30s\n", "Process", "Process Size", "Block Allocated", "Block Array");
+System.out.println("--------------------------------------------------------------------------");
+
+        //make a copy of blockArr
+        int[] block = blockArr.clone();
+
+        //loop over processes, alloc tracs whether we foind a blaock or not
+        for(int i = 0; i< n ; i++){
+            boolean alloc = false;
+            System.out.printf("%-10d %-15d", (i + 1), process[i]);
+
+            //main algorith
+            for(int j = 0; j<m ; j++){
+                if(block[j] >= process[i]){
+                    allocated[i] = j;
+                    block[j] -= process[i] ; //calculate left over space
+                    alloc = true;
+
+                   System.out.printf("%-20d %-30s\n", (allocated[i] + 1), Arrays.toString(block));
+                    break;
+
+
+
+
+                }
+
+            }
+            if(!alloc){
+                System.out.printf("%-20s %-30s\n", "Not Allocated", Arrays.toString(block));
+            }
+
+        }
+
+    
+        }
+
+        public static void nextFit(int[ ] blockArr , int[] process , int m , int n){
+        //create an array to remember which block each process is allocated intitialise all values to 1
+        int[] allocated = new int[n];
+        for(int i = 0 ; i< n; i++){
+            allocated[i] = -1;
+
+        }
+        int[] block = blockArr.clone();
+
+        int j =0;
+
+        //loop over process
+        for(int i = 0; i<n ; i++){
+            int count = 0;
+            boolean alloc = false;
+            System.out.printf("%-10s %-15s " , (i+1) , process[i]);
+
+            while(count<m){
+                if(block[j] >= process[i]){
+                    allocated[i] = j;
+                    block[j] -= process[i];
+                    alloc = true;
+                    System.out.printf("%-20s %-30s \n" , (allocated[i]+1 ) , Arrays.toString(block));
+
+                    j = (j+1)%m;
+                    break;
+
+                }
+                else{
+                    j=(j+1)%m;
+                    count++;
+
+                }
+            }
+            if(!alloc){
+                System.out.printf("%-20s %-30s \n " , "Not Allocated" , Arrays.toString(block));
+
+            }
+    }
+
+
+
+    }
+
+    public static void bestFit(int[] blockArr, int[] process , int m , int n){
+        int allocated[] = new int [n];
+        for(int i = 0; i<n ; i++){
+            allocated[i ]=-1;
+
+        }
+
+        int[] block = blockArr.clone();
+
+        System.out.println("Worst Fit Allocation");
+
+        System.out.printf("%-10s %-15s %-20s %-40s \n" , "Process" , "Process Size" , "Block Allocated " , "Block Array" );
+
+        //for each process
+        for(int i = 0;i<n ; i++){
+            int bestindex = -1;
+            System.out.printf("%-10s  %-15s" ,(i+1) , process[i] );
+
+            for(int  j=0; j<m ; j++){
+                if(block[j] >= process[i]){
+                    if(bestindex == -1 || block[j]< block[bestindex]){
+                        bestindex = j;
+
+                    }
+                }
+            }
+            if(bestindex!= -1){
+                allocated[i]= bestindex;
+                block[bestindex ] -= process[i];
+                System.out.printf("%-20s %-30s" , allocated[i],  Arrays.toString(block) );
+
+            }
+
+            else{
+                System.out.printf("%-20s %-30s" , "Not Allocated",  Arrays.toString(block) );
+            }
+
+        }
+    }
+
+    public static void worstFit(int[]  blockArr , int[] process , int m , int n){
+        int[] allocated = new int[n];
+        for(int i = 0 ; i<n ; i++){
+            allocated[i] = -1;
+
+        }
+
+        System.out.println("Worst Fit Allocation:");
+         System.out.println("Worst Fit Allocation");
+
+        System.out.printf("%-10s %-15s %-20s %-40s \n" , "Process" , "Process Size" , "Block Allocated " , "Block Array" );
+
+        int[] blocks = blockArr.clone();
+
+        for(int i = 0; i< n ;i++){
+            int worstindex = -1;
+            System.out.printf("%-10s %-15s f" , (i+1), process[i]);
+
+            for(int j = 0; j<m ; j++){
+                if (blocks[j] >= process[i]){
+                    if(worstindex ==-1 || blocks[j]>blocks[worstindex]){
+                        worstindex=j;
+
+                    }
+                }
+            }
+
+            if(worstindex != -1){
+                allocated[i] = worstindex;
+                blocks[worstindex] -= process[i];
+                System.out.printf("%-20s %-40s \n" , allocated[i]+1 , Arrays.toString(blocks));
+
+
+            }
+            else{
+                System.out.printf("%-20s %-40s \n " , "not allocated" , Arrays.toString(blocks));
+
+            }
+        }
+
+    }
+
+    public static void main(String[] args) {
+    Scanner sc = new Scanner(System.in);
+
+    System.out.print("Enter total number of memory blocks: ");
+    int m = sc.nextInt();
+    int[] blockArr = new int[m];
+
+    System.out.println("Enter sizes of the memory blocks:");
+    for (int i = 0; i < m; i++) {
+        System.out.print("Block " + (i + 1) + ": ");
+        blockArr[i] = sc.nextInt();
+    }
+
+    System.out.print("\nEnter total number of processes: ");
+    int n = sc.nextInt();
+    int[] processArr = new int[n];
+
+    System.out.println("Enter sizes of the processes:");
+    for (int i = 0; i < n; i++) {
+        System.out.print("Process " + (i + 1) + ": ");
+        processArr[i] = sc.nextInt();
+    }
+
+    System.out.println("\n------------------------------------------");
+    System.out.println("Initial Memory Blocks: " + Arrays.toString(blockArr));
+    System.out.println("Processes: " + Arrays.toString(processArr));
+    System.out.println("------------------------------------------");
+
+    // ✅ Call your First Fit function
+    //firstFit(blockArr, processArr, m, n);
+   // nextFit(blockArr , processArr , m , n);
+   // bestFit(blockArr, processArr, m, n);
+   worstFit(blockArr, processArr, m, n);
+
+
+    sc.close();
+}
+
+}`,
+                7: `import streamlit as st
+
+from datetime import datetime
+ 
+
+st.set_page_config(page_title ="Event Registration" , page_icon ="")
+
+#sesstion initialization
+
+if "page" not in st.session_state:
+    st.session_state["page"] = "home"
+
+if "data" not in st.session_state:
+    st.session_state["data"] = {}
+
+#navigation helper function
+def go_to (page):
+    st.session_state.page = page
+    st.rerun()
+
+#styling
+st.markdown("""
+<style> 
+            .stApp{
+            background: linear-gradient(135deg,  #f8e8ff 0% , #e3f2fd 100% );
+            font-family:"Poppins" , sans-serif;
+            }
+            
+            .card{
+                background-color: #fefefe;
+                padding: 20px;
+                border-radius: 15px;
+                box-shadow: 0px 4px 10px rgba(0,0,0,0.1);
+                margin-bottom :20px;
+                
+                
+            }
+            .title{
+                color:#691b9a;
+                font-weight :bold;
+                
+            }
+            .btn{
+                background-color:#b39ddb;
+                color:white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: 600;
+                
+            }
+            </style>
+            
+             """ , unsafe_allow_html= True)
+
+
+#Home page
+
+if st.session_state.page == "home":
+    st.title("Welcome to Pictofest 2025")
+    st.write("Choose you favourite events and workshops and register below!!1")
+    
+    events=[
+        {"title": "Play with clay" , "desc":"Pottery activity where you can have fun!!"},
+        {"title": "Tech" , "desc":"Pottery activity where you can have fun!!"},
+        
+        {"title": "ybs" , "desc":"Pottery activity where you can have fun!!"},
+        
+        {"title": "XYS" , "desc":"Pottery activity where you can have fun!!"},
+        
+        
+    ]
+    
+    for event in events:
+        st.markdown(f"""
+                    <div class = "card">
+                    <h4 class  = "title"> {event ['title']}</h4>
+                    <p> {event ['desc']}</p>
+                    </div>
+                    
+                     
+                    """ , unsafe_allow_html = True)
+        if st.button(f"Register for {event['title']} " , key= event['title']):
+            st.session_state.data["event"] = event["title"]
+            go_to("register")
+            
+            
+elif st.session_state.page =="register":
+    st.title ("Event Registration Form")
+    st.write(f"You are registering for: **{st.session_state.data.get('event', '')}**")
+    name = st.text_input("Full Name")
+    email = st.text_input("Email Adress")
+    phone = st.text_input("Phone Number:")
+    ticket = st.number_input ("Number of Tickets" , 1 , 5 , 1)
+    notes = st.text_area("any special requirements")
+    
+    if st.button("Submit"):
+        if name ==" " or email =="":
+            st.error("Please fill the required data")
+        else:
+            st.session_state.data.update({
+                "name": name,
+                "email" : email,
+                "phone " : phone,
+                "ticket": ticket,
+                "notes" : notes,
+                "time": datetime.now().strftime("%Y-%m-%d")
+            })
+            go_to("success")
+            
+            
+    if st.button("Baack to Home"):
+        go_to("home")
+        
+        
+elif st.session_state.page =="success":
+    st.success("Registratiob Successfull")
+    st.balloons()
+    
+    data = st.session_state.data
+    st.markdown(f"""
+                <div class= "card">
+                <h4 class = "title" > Registrtion Details </h4>
+                <p><b> Name: </b> {data['name']} </p>
+                <p><b> Email: </b> {data['email']} </p>
+                <p><b> Events: </b> {data['event']} </p>
+                <p><b> Ticket: </b> {data['ticket']} </p>
+                
+                <p><b> Registerd on: </b> {data['time']} </p>
+                </div>
+                
+                
+                
+                """ , unsafe_allow_html= True) 
+    
+    if st.button("Back t Home"):
+        go_to("home")
+        
+           
+        
+            
+    
+    
+        
+
+
+`,
+            };
+
+            function copyCode(id, btn) {
+                const code = assignmentCodes[id];
+                navigator.clipboard.writeText(code).then(() => {
+                    const original = btn.textContent;
+                    btn.textContent = "✅ Copied!";
+                    btn.classList.add("copied");
+                    setTimeout(() => {
+                        btn.textContent = original;
+                        btn.classList.remove("copied");
+                    }, 1500);
+                });
+            }
+        </script>
+    </body>
+</html>
