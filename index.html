@@ -622,179 +622,161 @@ public class PassOneMacro {
                 4: `import java.io.*;
 import java.util.*;
 
-public class PassOneMacro {
+public class PassTwomacro {
 
-    // ---------------- MNT Entry ----------------
     static class MNTEntry {
         String name;
         int pp, kp, mdtp, kpdtp;
+
         MNTEntry(String n, int p, int k, int md, int kd) {
-            name = n; pp = p; kp = k; mdtp = md; kpdtp = kd;
-        }
-        public String toString() {
-            return name + "  PP=" + pp + "  KP=" + kp + "  MDTP=" + mdtp + "  KPDTABPTR=" + kpdtp;
+            name = n;
+            pp = p;
+            kp = k;
+            mdtp = md;
+            kpdtp = kd;
         }
     }
 
-    // ---------------- KPDTAB Entry ----------------
     static class KPEntry {
         String param, defaultVal;
-        KPEntry(String p, String d) { param = p; defaultVal = d; }
-        public String toString() { return param + " = " + defaultVal; }
+
+        KPEntry(String p, String d) {
+            param = p;
+            defaultVal = d;
+        }
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
+
+        // ---------------- LOAD TABLES FROM PASS 1 ----------------
         List<MNTEntry> MNT = new ArrayList<>();
-        List<KPEntry> KPDTAB = new ArrayList<>();
         List<String> MDT = new ArrayList<>();
+        List<KPEntry> KPDTAB = new ArrayList<>();
 
-        // store PNTAB *per macro* in insertion order
-        Map<String, LinkedHashMap<String,Integer>> PNTABs = new LinkedHashMap<>();
+        loadMNT(MNT);
+        loadMDT(MDT);
+        loadKPDTAB(KPDTAB);
 
-        int mdtp = 1;     // 1-based MDT pointer
-        int kpdtp = 1;    // 1-based KPDTAB pointer
+        System.out.println("=== PASS 2 OUTPUT ===\n");
 
-        try (BufferedReader br = new BufferedReader(new FileReader("input.asm"))) {
-            String raw;
-            while ((raw = br.readLine()) != null) {
-                String line = raw.trim();
+        try (BufferedReader br = new BufferedReader(new FileReader("program.asm"))) {
+            String line;
+
+            while ((line = br.readLine()) != null) {
+                line = line.trim();
                 if (line.isEmpty()) continue;
 
-                if (line.equalsIgnoreCase("MACRO")) {
-                    // read header line
-                    String header = br.readLine();
-                    if (header == null) break;
-                    header = header.trim();
-                    // macroName [params]
-                    String[] hdrParts = header.split("\\s+", 2);
-                    String macroName = hdrParts[0].trim();
-                    String paramsPart = hdrParts.length > 1 ? hdrParts[1].trim() : "";
+                // Check if line is macro call
+                String[] parts = line.split("\\s+", 2);
+                String maybeMacro = parts[0];
 
-                    // new PNTAB for this macro (ordered)
-                    LinkedHashMap<String,Integer> PNTAB = new LinkedHashMap<>();
-                    int pp = 0, kp = 0;
+                MNTEntry entry = findMacro(MNT, maybeMacro);
 
-                    if (!paramsPart.isEmpty()) {
-                        // split by commas but keep empties if present
-                        String[] rawParams = paramsPart.split(",");
-                        for (String rp : rawParams) {
-                            String p = rp.trim();
-                            if (p.isEmpty()) continue;
-                            if (p.contains("=")) {
-                                // keyword parameter
-                                String[] kv = p.split("=", 2);
-                                String pname = kv[0].trim();
-                                String def = kv.length > 1 ? kv[1] : "";
-                                // allow empty default (""), keep as-is
-                                KPDTAB.add(new KPEntry(pname, def));
-                                kp++;
-                                // add to PNTAB (next index)
-                                PNTAB.put(pname, PNTAB.size() + 1);
-                            } else {
-                                // positional parameter
-                                PNTAB.put(p, PNTAB.size() + 1);
-                                pp++;
-                            }
-                        }
-                    }
-
-                    // add entry in MNT
-                    MNT.add(new MNTEntry(macroName, pp, kp, mdtp, kpdtp));
-
-                    // store PNTAB for macro
-                    PNTABs.put(macroName, PNTAB);
-
-                    // read macro body until MEND
-                    while ((raw = br.readLine()) != null) {
-                        String bodyLine = raw.trim();
-                        if (bodyLine.isEmpty()) continue;
-
-                        if (bodyLine.equalsIgnoreCase("MEND")) {
-                            MDT.add("MEND");
-                            mdtp++;
-                            break;
-                        }
-
-                        // Replace occurrences of each parameter (exact match) with (P,index)
-                        // Use literal replacement via String.replace with exact token
-                        // To avoid accidental partial matches, require exact param text (params include '&')
-                        String replaced = bodyLine;
-                        for (Map.Entry<String,Integer> pe : PNTAB.entrySet()) {
-                            String paramName = pe.getKey();
-                            int index = pe.getValue();
-                            // replace exact occurrences of paramName
-                            replaced = replaced.replace(paramName, "(P," + index + ")");
-                        }
-
-                        MDT.add(replaced);
-                        mdtp++;
-                    }
-
-                    // advance kpdtp by number of keyword params added for this macro
-                    kpdtp += kp;
+                if (entry == null) {
+                    // Not a macro → Print directly
+                    System.out.println(line);
+                } else {
+                    // Macro call found → Expand
+                    expandMacro(entry, parts.length > 1 ? parts[1] : "", MDT, KPDTAB);
                 }
             }
         }
+    }
 
-        // ----------------- OUTPUT -----------------
+    // ---------------- MACRO EXPANSION ----------------
+    static void expandMacro(MNTEntry mnt, String argList,
+                            List<String> MDT, List<KPEntry> KPDTAB) {
 
-        // Console print
-        System.out.println("================ MNT (Macro Name Table) ================");
-        int i = 1;
-        for (MNTEntry m : MNT) {
-            System.out.println(i++ + ". " + m);
-        }
+        // Setup ALA
+        Map<Integer, String> ALA = new HashMap<>();
 
-        System.out.println("================ KPDTAB (Keyword Param Table) ================");
-        i = 1;
-        for (KPEntry k : KPDTAB) {
-            System.out.println(i++ + ". " + k);
-        }
+        // Split arguments
+        String[] givenArgs = argList.isEmpty() ? new String[0] : argList.split(",");
 
-        System.out.println("================ MDT (Macro Definition Table) ================");
-        i = 1;
-        for (String entry : MDT) {
-            System.out.println(i++ + "  " + entry);
-        }
-
-        System.out.println("================ PNTABs (per macro) ================");
-        for (Map.Entry<String, LinkedHashMap<String,Integer>> e : PNTABs.entrySet()) {
-            System.out.println("PNTAB for " + e.getKey() + ":");
-            int idx = 1;
-            for (String param : e.getValue().keySet()) {
-                System.out.println("  " + idx++ + "  " + param);
+        // 1. Fill positional parameters
+        for (int i = 0; i < mnt.pp; i++) {
+            if (i < givenArgs.length) {
+                ALA.put(i + 1, givenArgs[i].trim());
             }
         }
 
-        // Also write to files for Pass-2
-        try (PrintWriter pw = new PrintWriter("mnt.txt")) {
-            int idx = 1;
-            for (MNTEntry m : MNT) {
-                pw.println(idx++ + " " + m.name + " " + m.pp + " " + m.kp + " " + m.mdtp + " " + m.kpdtp);
-            }
-        }
-        try (PrintWriter pw = new PrintWriter("kpdt.txt")) {
-            int idx = 1;
-            for (KPEntry k : KPDTAB) {
-                pw.println(idx++ + " " + k.param + " " + (k.defaultVal == null ? "" : k.defaultVal));
-            }
-        }
-        try (PrintWriter pw = new PrintWriter("mdt.txt")) {
-            int idx = 1;
-            for (String s : MDT) pw.println(s);
-        }
-        try (PrintWriter pw = new PrintWriter("pntab.txt")) {
-            for (Map.Entry<String, LinkedHashMap<String,Integer>> e : PNTABs.entrySet()) {
-                pw.println("PNTAB for " + e.getKey());
-                for (Map.Entry<String,Integer> pe : e.getValue().entrySet()) {
-                    pw.println(pe.getValue() + " " + pe.getKey());
-                }
+        // 2. Fill keyword parameters
+        int kpBase = mnt.pp;
+        for (int i = 0; i < mnt.kp; i++) {
+            String[] kv = givenArgs.length > kpBase + i ?
+                    givenArgs[kpBase + i].split("=") : null;
+
+            // KPDTAB entry
+            KPEntry kp = KPDTAB.get(mnt.kpdtp - 1 + i);
+
+            if (kv != null && kv.length == 2) {
+                ALA.put(kpBase + i + 1, kv[1]); // user-specified value
+            } else {
+                ALA.put(kpBase + i + 1, kp.defaultVal); // default value
             }
         }
 
-        System.out.println("\nFiles written: mnt.txt kpdt.txt mdt.txt pntab.txt");
+        // ---------------- EXPAND MDT ----------------
+        int ptr = mnt.mdtp - 1;
+        String line = MDT.get(ptr);
+
+        while (!line.equals("MEND")) {
+
+            String expanded = line;
+
+            // Replace (P,#) using ALA
+            for (int k : ALA.keySet()) {
+                expanded = expanded.replace("(P," + k + ")", ALA.get(k));
+            }
+
+            System.out.println(expanded);
+
+            ptr++;
+            line = MDT.get(ptr);
+        }
+    }
+
+    // ---------------- HELPER METHODS ----------------
+    static MNTEntry findMacro(List<MNTEntry> MNT, String name) {
+        for (MNTEntry m : MNT)
+            if (m.name.equals(name)) return m;
+        return null;
+    }
+
+    static void loadMNT(List<MNTEntry> MNT) throws Exception {
+        try (BufferedReader br = new BufferedReader(new FileReader("MNT.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] p = line.split("\\s+");
+                MNT.add(new MNTEntry(
+                        p[0],
+                        Integer.parseInt(p[1]),
+                        Integer.parseInt(p[2]),
+                        Integer.parseInt(p[3]),
+                        Integer.parseInt(p[4])
+                ));
+            }
+        }
+    }
+
+    static void loadMDT(List<String> MDT) throws Exception {
+        try (BufferedReader br = new BufferedReader(new FileReader("MDT.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) MDT.add(line);
+        }
+    }
+
+    static void loadKPDTAB(List<KPEntry> KPDTAB) throws Exception {
+        try (BufferedReader br = new BufferedReader(new FileReader("KPDTAB.txt"))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] p = line.split("=");
+                KPDTAB.add(new KPEntry(p[0], p.length > 1 ? p[1] : "-"));
+            }
+        }
     }
 }
+
 
 >`,
                 5: `import java.util.LinkedList;
@@ -1268,5 +1250,6 @@ elif st.session_state.page =="success":
         </script>
     </body>
 </html>
+
 
 
