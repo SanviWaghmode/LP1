@@ -278,244 +278,167 @@ public class PassOneAssembler {
     }
 }
 `,
-                2: ` import java.io.*;
+                2: ` import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.*;
 
-public class TwoPassAssemblerPassOne {
-    static Map<String, String[]> OPTAB = new HashMap<>();
-    static Map<String, Integer> REGTAB = new HashMap<>();
-    static Map<String, Integer> CONDTAB = new HashMap<>();
-    static Map<String, Integer> SYMTAB = new LinkedHashMap<>();
-    static List<Literal> LITTAB = new ArrayList<>();
-    static List<Integer> POOLTAB = new ArrayList<>();
+public class TwoPassAssmbler {
+
+    static Map<Integer, Integer> SYMTAB = new HashMap<>();
+    static Map<Integer, Integer> LITTAB = new HashMap<>();
     static List<String> IC = new ArrayList<>();
 
-    static int LC = 0;
-
-    static class Literal {
-        String literal;
-        int address;
-
-        Literal(String literal) {
-            this.literal = literal;
-            this.address = -1;
-        }
+    public static void main(String[] args) throws IOException {
+        initFiles();
+        generateMachineCode();
     }
 
-    public static void main(String[] args) {
-        initTables();
+    // ------------------------------------------------------
+    // LOAD SYMBOL TABLE, LITERAL TABLE AND IC
+    // ------------------------------------------------------
+    static void initFiles() throws IOException {
 
-        try {
-            BufferedReader br = new BufferedReader(new FileReader("program1.asm"));
+        // CORRECT SYMBOL TABLE (index → address)
+        SYMTAB.put(1, 100);   // A
+        SYMTAB.put(2, 103);   // LOOP
+        SYMTAB.put(3, 108);   // B
+        SYMTAB.put(4, 99);   // NEXT
+        SYMTAB.put(5, 101);   // BACK
+        SYMTAB.put(6, 106);   // LAST
+
+        // CORRECT LITERAL TABLE (index → address)
+        //LITTAB.put(1, 211);   // ='5'
+        //LITTAB.put(2, 212);   // ='1'
+        //LITTAB.put(3, 219);   // ='1'
+
+        // READ IC FILE
+        try (BufferedReader br = new BufferedReader(new FileReader("ic.txt"))) {
             String line;
-            POOLTAB.add(0);
-
             while ((line = br.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
+                if (!line.trim().isEmpty())
+                    IC.add(line.trim());
+            }
+        }
+    }
 
-                String[] parts = line.split("\\s+|,");
-                List<String> tokens = new ArrayList<>();
-                for (String part: parts) {
-                    if (!part.isEmpty()) tokens.add(part);
+    // ------------------------------------------------------
+    // PASS-2: GENERATE MACHINE CODE
+    // ------------------------------------------------------
+    static void generateMachineCode() {
+
+        int LC = 0;
+
+        for (String line : IC) {
+
+            // ------------------------------
+            // AD – Assembler Directives
+            // ------------------------------
+            if (line.startsWith("(AD")) {
+
+                // START or ORIGIN → update LC
+                if (line.startsWith("(AD, 01") || line.startsWith("(AD, 03")) {
+                    LC = getConstant(line);
                 }
 
-                String label = null;
-                String opcode;
-                String op1 = null, op2 = null;
-
-                if (OPTAB.containsKey(tokens.get(0)) || isDirective(tokens.get(0))) {
-                    opcode = tokens.get(0);
-                    if (tokens.size() > 1) op1 = tokens.get(1);
-                    if (tokens.size() > 2) op2 = tokens.get(2);
-                } else {
-                    label = tokens.get(0);
-                    opcode = tokens.get(1);
-                    if (tokens.size() > 2) op1 = tokens.get(2);
-                    if (tokens.size() > 3) op2 = tokens.get(3);
+                // END
+                if (line.startsWith("(AD, 02")) {
+                    System.out.println("End of the file");
                 }
 
-                if (label != null) {
-                    SYMTAB.put(label, LC);
+                continue;   // AD produces no machine code
+            }
+
+            // ------------------------------
+            // DL – Declarative Statements
+            // ------------------------------
+            if (line.startsWith("(DL")) {
+
+                System.out.print(LC + " : ");
+
+                if (line.startsWith("(DL, 01")) {  // DC
+                    int val = getConstant(line);
+                    System.out.println("00 00 " + String.format("%03d", val));
+                }
+                else if (line.startsWith("(DL, 02")) {  // DS
+                    System.out.println("00 00 000");
                 }
 
-                if (opcode.equals("START")) {
-                    LC = Integer.parseInt(op1);
-                    IC.add("(AD, 01) (C, " + op1 + ")");
-                } else if (opcode.equals("END") || opcode.equals("LTORG")) {
-                    handleLiteralPool();
-                    IC.add("(AD, " + (opcode.equals("END") ? "02" : "05") + ")");
-                } else if (opcode.equals("ORIGIN")) {
-                    int val = evaluateExpression(op1);
-                    IC.add("(AD, 03) (C, " + val + ")");
-                    LC = val;
-                } else if (opcode.equals("EQU")) {
-                    int val = evaluateExpression(op1);
-                    SYMTAB.put(label, val);
-                } else if (opcode.equals("DS")) {
-                    IC.add("(DL, 02) (C, " + op1 + ")");
-                    LC += Integer.parseInt(op1);
-                } else if (opcode.equals("DC")) {
-                    IC.add("(DL, 01) (C, " + op1.replace("'", "") + ")");
-                    LC += 1;
-                } else {
-                    String[] opInfo = OPTAB.get(opcode);
-                    String icLine = "(IS," + opInfo[1] + ") ";
+                LC++;
+                continue;
+            }
 
-                    if (op1 != null) {
-                        if (REGTAB.containsKey(op1)) {
-                            icLine += "(" + REGTAB.get(op1) + ") ";
-                        } else if (CONDTAB.containsKey(op1)) {
-                            icLine += "(" + CONDTAB.get(op1) + ") ";
+            // ------------------------------
+            // IS – Imperative Statements
+            // ------------------------------
+            if (line.startsWith("(IS")) {
+
+                System.out.print(LC + " : ");
+
+                String opcode = getOpcode(line);
+                String reg = "00";
+                String mem = "000";
+
+                String[] parts = line.split("\\s+");
+
+                for (int i = 0; i < parts.length; i++) {
+                    String part = parts[i].trim();
+
+                    // REGISTER e.g. (1)
+                    if (part.matches("\\(\\d\\)")) {
+                        reg = part.replaceAll("[^0-9]", "");
+                    }
+
+                    // SYMBOL reference is TWO tokens: (S,   1)
+                    if (part.equals("(S,")) {
+                        String next = parts[i + 1].trim(); // "1)"
+                        int idx = getNum(next);
+                        if (idx != -1 && SYMTAB.containsKey(idx)) {
+                            mem = String.format("%03d", SYMTAB.get(idx));
                         }
                     }
-                    if (op2 != null) {
-                        if (op2.startsWith("=")) {
-                            Literal lit = new Literal(op2);
-                            boolean exists = false;
-                            for (Literal l : LITTAB) {
-                                if (l.literal.equals(op2)) {
-                                    exists = true;
-                                    break;
-                                }
-                            }
-                            if (!exists) {
-                                LITTAB.add(lit);
-                            }
-                            int litIndex = findLiteralIndex(op2) + 1;
-                            icLine += "(L," + litIndex + ")";
-                        } else if (SYMTAB.containsKey(op2)) {
-                            int symIndex = findSymbolIndex(op2) + 1;
-                            icLine += "(S," + symIndex + ")";
-                        } else {
-                            if (!SYMTAB.containsKey(op2)) {
-                                SYMTAB.put(op2, -1);
-                            }
-                            int symIndex = findSymbolIndex(op2) + 1;
-                            icLine += "(S," + symIndex + ")";
+
+                    // LITERAL reference is TWO tokens: (L,   1)
+                    if (part.equals("(L,")) {
+                        String next = parts[i + 1].trim(); // "1)"
+                        int idx = getNum(next);
+                        if (idx != -1 && LITTAB.containsKey(idx)) {
+                            mem = String.format("%03d", LITTAB.get(idx));
                         }
                     }
-                    IC.add(icLine.trim());
-                    LC++;
                 }
-            }
-            br.close();
 
-            System.out.println("Intermediate Code:");
-            for (String ic : IC) {
-                System.out.println(ic);
-            }
-
-            System.out.println("\nSymbol Table:");
-            for (Map.Entry<String, Integer> e : SYMTAB.entrySet()) {
-                System.out.println(e.getKey() + " = " + e.getValue());
-            }
-
-            System.out.println("\nLiteral Table:");
-            int i = 1;
-            for (Literal l : LITTAB) {
-                System.out.println(i++ + ") " + l.literal + " = " + l.address);
-            }
-
-            System.out.println("\nPool Table:");
-            for (int p : POOLTAB) {
-                System.out.println("#" + (POOLTAB.indexOf(p) + 1) + " starts at literal #" + (p + 1));
-            }
-
-        } catch(IOException e) {
-            System.out.println(e);
-        }
-    }
-
-    static public boolean isDirective (String s) {
-        return s.equals("START") || s.equals("END") || s.equals("ORIGIN") || s.equals("EQU") || s.equals("LTORG") || s.equals("DS") ||s.equals("DC");
-    }
-
-    static public void initTables() {
-        OPTAB.put("STOP", new String[] {"IS", "00"});
-        OPTAB.put("ADD", new String[] {"IS", "01"});
-        OPTAB.put("SUB", new String[] {"IS", "02"});
-        OPTAB.put("MULT", new String[] {"IS", "03"});
-        OPTAB.put("MOVER", new String[] {"IS", "04"});
-        OPTAB.put("MOVEM", new String[] {"IS", "05"});
-        OPTAB.put("COMP", new String[] {"IS", "06"});
-        OPTAB.put("BC", new String[] {"IS", "07"});
-        OPTAB.put("DIV", new String[] {"IS", "08"});
-        OPTAB.put("READ", new String[] {"IS", "09"});
-        OPTAB.put("PRINT", new String[] {"IS", "10"});
-
-        REGTAB.put("AREG", 1);
-        REGTAB.put("BREG", 2);
-        REGTAB.put("CREG", 3);
-        REGTAB.put("DREG", 4);
-
-        CONDTAB.put("LT", 1);
-        CONDTAB.put("LE", 2);
-        CONDTAB.put("EQ", 3);
-        CONDTAB.put("GT", 4);
-        CONDTAB.put("GE", 5);
-        CONDTAB.put("ANY", 6);
-    }
-
-    static void handleLiteralPool() {
-        int poolStart = POOLTAB.get(POOLTAB.size() - 1);
-        for (int i = poolStart; i < LITTAB.size(); i++) {
-            if (LITTAB.get(i).address == -1) {
-                LITTAB.get(i).address = LC++;
-            }
-        }
-        if (LITTAB.size() > poolStart) {
-            POOLTAB.add(LITTAB.size());
-        }
-    }
-    
-
-    static int findLiteralIndex(String lit) {
-        for (int i = 0; i < LITTAB.size(); i++) {
-            if (LITTAB.get(i).literal.equals(lit))
-                return i;
-        }
-        return -1;
-    }
-
-    static int findSymbolIndex(String sym) {
-        int i = 0;
-        for (String s: SYMTAB.keySet()) {
-            if (s.equals(sym)) return i;
-            i++;
-        }
-        return -1;
-    }
-
-    static int evaluateExpression(String expr) {
-        if (expr.contains("+")) {
-            String[] parts = expr.split("\\+");
-            int base = SYMTAB.getOrDefault(parts[0], -1);
-            if (base == -1) {
-                throw new RuntimeException("Undefined symbol: " + parts[0]);
-            }
-            return base + Integer.parseInt(parts[1]);
-        } else if (expr.contains("-")) {
-            String[] parts = expr.split("\\-");
-            int base = SYMTAB.getOrDefault(parts[0], -1);
-            if (base == -1) {
-                throw new RuntimeException("Undefined symbol: " + parts[0]);
-            }
-            return base - Integer.parseInt(parts[1]);
-        } else {
-            if (SYMTAB.containsKey(expr)) {
-                int base = SYMTAB.get(expr);
-                if (base == -1) {
-                    throw new RuntimeException("Undefined symbol: " + expr);
-                }
-                return base;
-            } else {
-                return Integer.parseInt(expr);
+                System.out.println(opcode + " " + reg + " " + mem);
+                LC++;
             }
         }
     }
-    
-}  
+
+    // ------------------------------------------------------
+    // HELPER FUNCTIONS
+    // ------------------------------------------------------
+    static int getConstant(String line) {
+        int start = line.indexOf("C,") + 2;
+        int end = line.indexOf(")", start);
+        return Integer.parseInt(line.substring(start, end).trim());
+    }
+
+    static String getOpcode(String line) {
+        int start = line.indexOf(",") + 1;
+        int end = line.indexOf(")", start);
+        return line.substring(start, end);
+    }
+
+    // SAFE getNum() → avoids crash for STOP
+    static int getNum(String part) {
+        String numStr = part.replaceAll("[^0-9]", "");
+
+        if (numStr.isEmpty())
+            return -1;
+
+        return Integer.parseInt(numStr);
+    }
+}
 
 `,
                 3: `import java.io.*;
@@ -1255,3 +1178,4 @@ elif st.session_state.page =="success":
         </script>
     </body>
 </html>
+
